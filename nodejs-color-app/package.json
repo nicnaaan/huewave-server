@@ -1,0 +1,16 @@
+{
+  "name": "nodejs-color-app",
+  "version": "1.0.0",
+  "description": "A Node.js application for color analysis from images.",
+  "main": "src/app.js",
+  "scripts": {
+    "start": "node src/app.js"
+  },
+  "dependencies": {
+    "express": "^4.17.1",
+    "multer": "^1.4.2",
+    "colorthief": "^2.3.0"
+  },
+  "author": "",
+  "license": "ISC"
+}
