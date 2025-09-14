@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <title>Huewave Lab — 單檔完整版（色彩分析＋音色連結）</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root { --gap: 12px; }
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, -apple-system, "Noto Sans TC", sans-serif; padding: 20px; line-height: 1.6; }
+    h1 { margin: 0 0 6px; }
+    .row { display: flex; gap: var(--gap); flex-wrap: wrap; align-items: center; }
+    .col { display: flex; flex-direction: column; gap: var(--gap); }
+    .card { border: 1px solid #eee; border-radius: 14px; padding: 14px; }
+    button { padding: 8px 14px; border-radius: 10px; border: 1px solid #ddd; background: #fafafa; cursor: pointer; }
+    button:disabled { opacity:.5; cursor: not-allowed; }
+    .pill { display:inline-block; padding: 2px 8px; border-radius: 999px; background:#f2f2f2; margin-right:6px; font-size:12px; }
+    .log { white-space: pre-wrap; background: #0a0a0a; color: #e7e7e7; padding: 12px; border-radius: 10px; max-height: 280px; overflow: auto; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;}
+    .ok { color:#0a7f2e; } .warn { color:#b08400; } .err{ color:#b40000; }
+    #preview { max-width: 100%; border-radius: 10px; display:none; }
+    .swatches { display:flex; gap:8px; flex-wrap:wrap; }
+    .swatch { width:32px; height:32px; border-radius:6px; border:1px solid #ddd; }
+    .kv { display:grid; grid-template-columns: 120px 1fr; gap:6px 12px; }
+    .kv b { color:#333; }
+    .muted { color:#666; font-size:12px; }
+  </style>
+  <!-- Tone.js（CDN） -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+</head>
+<body>
+  <h1>Huewave Lab</h1>
+  <div class="muted">單檔完整版：上傳圖片 → 取主色與彩度 → 決定曲風 → 自動連結 <code>samples/*</code> → 播放。</div>
+
+  <div class="row" style="margin-top:12px;">
+    <!-- 1) 上傳圖片並分析主色（新的 upload-area） -->
+    <div class="card" style="flex:1; min-width: 280px;">
+      <h3>1) 上傳圖片並分析主色</h3>
+      <div id="upload-area" style="margin:20px;">
+        <label for="photoInput">📷 上傳照片（手機掃QR後選照片）</label><br>
+        <input type="file" id="photoInput" accept="image/*">
+        <button id="uploadBtn">上傳並分析</button>
+        <div id="swatches-upload" style="margin-top:10px;"></div>
+        <div id="genre-pill" class="pill" style="margin-top:10px;">曲風：—</div>
+      </div>
+    </div>
+
+    <!-- 2) 建立樂器 -->
+    <div class="card" style="flex:1; min-width: 280px;">
+      <h3>2) 建立樂器</h3>
+      <div>資料夾請保持：</div>
+      <div>
+        <span class="pill">samples/piano</span>
+        <span class="pill">samples/saxophone</span>
+        <span class="pill">samples/guitar</span>
+        <span class="pill">samples/bass</span>
+        <span class="pill">samples/drum/<i>Kdrum, Snare, HihatClosed, HihatOpen, Crash</i></span>
+      </div>
+      <div class="row" style="margin-top:10px;">
+        <button id="btn-start">解鎖音訊 (必按)</button>
+        <button id="btn-build">建立樂器</button>
+      </div>
+      <div class="row" style="margin-top:8px;">
+        <button id="test-piano" disabled>piano C4</button>
+        <button id="test-sax" disabled>sax A4</button>
+        <button id="test-guitar" disabled>guitar E4</button>
+        <button id="test-bass" disabled>bass C2</button>
+        <button id="test-drum" disabled>snare</button>
+      </div>
+    </div>
+
+    <!-- 3) 播放 -->
+    <div class="card" style="flex:1; min-width: 280px;">
+      <h3>3) 依彩度播放曲風</h3>
+      <div class="muted">彩度 → 曲風：0–20 Jazz、20–40 Funk、40–60 Lo-fi、60–80 Dream Pop、80–100 Rock</div>
+      <div class="row" style="margin-top:10px;">
+        <button id="btn-play" disabled>播放 4 小節</button>
+        <button id="btn-stop">停止</button>
+      </div>
+      <h3 style="margin-top:14px;">Log</h3>
+      <div id="log" class="log"></div>
+    </div>
+  </div>
+
+<script>
+/* ========================== 工具 ========================== */
+function rgbToHsl(r,g,b){
+  r/=255; g/=255; b/=255;
+  const max = Math.max(r,g,b), min=Math.min(r,g,b);
+  let h,s,l=(max+min)/2;
+  if(max===min){ h=s=0; }
+  else{
+    const d=max-min;
+    s = l>0.5 ? d/(2-max-min) : d/(max+min);
+    switch(max){
+      case r: h=(g-b)/d+(g<b?6:0); break;
+      case g: h=(b-r)/d+2; break;
+      case b: h=(r-g)/d+4; break;
+    }
+    h/=6;
+  }
+  return [Math.round(h*360), Math.round(s*100), Math.round(l*100)];
+}
+
+/* ========================== 上傳與顏色分析 ========================== */
+let latestColors = null; // 會存 {rgb: [...], hex: [...]}
+
+document.getElementById('uploadBtn').addEventListener('click', async () => {
+  const input = document.getElementById('photoInput');
+  const file = input.files[0];
+  if (!file) return alert('請先選一張照片');
+
+  const fd = new FormData();
+  fd.append('photo', file);
+
+  try {
+    const res = await fetch('/upload', { method: 'POST', body: fd });
+    if (!res.ok) throw new Error('上傳失敗');
+    const data = await res.json();
+    latestColors = data; // { rgb: [[r,g,b],...], hex: ["#..."] }
+
+    // 顯示色塊
+    const sw = document.getElementById('swatches-upload');
+    sw.innerHTML = '';
+    data.hex.forEach(h => {
+      const d = document.createElement('div');
+      d.style.display = 'inline-block';
+      d.style.width = '40px';
+      d.style.height = '40px';
+      d.style.marginRight = '6px';
+      d.style.borderRadius = '6px';
+      d.style.border = '1px solid #333';
+      d.style.background = h;
+      sw.appendChild(d);
+    });
+
+    console.log('抓到色塊：', data);
+
+    // 🎵 根據彩度決定曲風
+    if (data.rgb.length > 0) {
+      const [r,g,b] = data.rgb[0];
+      const [h,s,l] = rgbToHsl(r,g,b);
+      let gname = "—";
+      if (s < 20) gname = "Jazz";
+      else if (s < 40) gname = "Funk";
+      else if (s < 60) gname = "Lo-fi";
+      else if (s < 80) gname = "Dream Pop";
+      else gname = "Rock";
+      document.getElementById("genre-pill").textContent = `曲風：${gname}`;
+    }
+
+    document.getElementById("btn-play").disabled = false;
+    alert('分析完成！按播放即可聽音樂（或接下去的流程）');
+  } catch (e) {
+    console.error(e);
+    alert('上傳或分析失敗：' + e.message);
+  }
+});
+
+/* ========================== 播放鍵綁定 ========================== */
+const playBtn = document.getElementById('btn-play');
+if (playBtn) {
+  playBtn.addEventListener('click', () => {
+    if (!latestColors) return alert('請先上傳照片並分析色塊');
+    console.log('準備開始播放，使用色塊：', latestColors);
+    // TODO: 呼叫你的音樂程式碼，傳入 latestColors
+    // 範例：startMusicWithColors(latestColors.hex);
+  });
+}
+</script>
+</body>
+</html>
